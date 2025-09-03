@@ -84,12 +84,31 @@ python3 website_cloner.py https://example.com
 ```
 
 The script will:
-1. Analyze the WordPress site structure
-2. Present interactive configuration options
-3. Download and save pages with assets
-4. Create a static copy in the `cloned_[domain]` directory
+1. Present a main menu with options to count, clone, or both
+2. Analyze the WordPress site structure (if counting)
+3. Present interactive configuration options (if cloning)
+4. Download and save pages with assets
+5. Create a static copy in the `cloned_[domain]` directory
 
 ## Interactive UI Examples
+
+### Main Menu
+```
+🔍 Complete WordPress Site Analyzer & Cloner
+🎯 Target: https://example.com
+
+============================================================
+🎯 MAIN MENU
+============================================================
+What would you like to do?
+   1. Count URLs only (quick analysis)
+   2. Clone site only (skip counting)
+   3. Both count and clone (recommended)
+   4. Exit
+
+   Enter choice (1/2/3/4, default 1): 1
+   ✅ Selected: Count URLs only
+```
 
 ### Site Analysis
 ```
@@ -105,6 +124,9 @@ The script will:
       3. sitemap-categories.xml: 12 URLs
       4. sitemap-tags.xml: 45 URLs
    📊 Total internal URLs collected: 232
+   💾 Saved 232 URLs to cloned_example_com/all_sitemap_urls.txt
+   💾 Saved 150 URLs to cloned_example_com/sitemap-posts.xml_urls.txt
+   💾 Saved 25 URLs to cloned_example_com/sitemap-pages.xml_urls.txt
 
 📋 SITE ANALYSIS (from sitemap):
    📝 Posts: 150
@@ -116,17 +138,100 @@ The script will:
    ℹ️  Recommendation based on sitemap count (232 URLs)
 ```
 
-### Configuration Menu
+### Smart Configuration (Small Site - ≤300 URLs)
+```
+============================================================
+🛠️  CLONING CONFIGURATION
+============================================================
+Site has 35 posts and 4 pages
+📊 Total URLs available: 42
+
+🔍 Checking 42 URLs from all_sitemap_urls.txt...
+📋 Found 15 URLs that need to be downloaded:
+    1. https://fingreen.org/
+    2. https://fingreen.org/about/
+    3. https://fingreen.org/resources/
+    4. https://fingreen.org/news/
+    5. https://fingreen.org/post-1/
+   ... and 10 more
+
+📋 MISSING URLS DETECTED:
+   📊 15 URLs need to be downloaded
+   🎯 These will be prioritized for cloning
+
+✅ SMALL SITE DETECTED (42 URLs)
+   📊 Total URLs is less than cut-off of 300
+   🚀 Will proceed with full clone
+   ⏱️  Estimated time: ~5 minutes
+   ⚙️  Auto-configured settings:
+      • Max pages: 300
+      • Crawl depth: 10
+      • Request delay: 1.0s
+      • Auto-open browser: Yes
+```
+
+### Smart Skip (All URLs Already Exist)
+```
+============================================================
+🛠️  CLONING CONFIGURATION
+============================================================
+Site has 35 posts and 4 pages
+📊 Total URLs available: 42
+📁 Found 51 existing HTML files in cloned_fingreen_org
+   These will be skipped to avoid re-downloading
+🔍 Checking 42 URLs from all_sitemap_urls.txt...
+✅ All URLs from sitemap already exist as HTML files
+
+✅ ALL URLS ALREADY EXIST:
+   📊 All URLs from sitemap already have HTML files
+   🚀 Will skip to completion summary
+
+✅ SMALL SITE DETECTED (42 URLs)
+   📊 Total URLs is less than cut-off of 300
+   🚀 Will proceed with full clone
+   ⏱️  Estimated time: ~5 minutes
+   ⚙️  Auto-configured settings:
+      • Max pages: 300
+      • Crawl depth: 10
+      • Request delay: 1.0s
+      • Auto-open browser: Yes
+
+🚀 Starting clone of https://fingreen.org
+📋 Found 0 URLs to process
+
+🔄 PROCESSING PAGES:
+
+🎉 CLONING COMPLETED!
+📊 Pages processed: 0
+📁 Output directory: cloned_fingreen_org
+
+📋 BATCH SUMMARY:
+   📄 New pages downloaded: 0
+   ⏭️  Pages already existed: 51
+   📊 Total pages in directory: 51
+
+🌐 Opening cloned site...
+🌐 Opened cloned_fingreen_org/index.html in your default browser
+```
+
+### Manual Configuration (Large Site - >300 URLs)
 ```
 ============================================================
 🛠️  CLONING CONFIGURATION
 ============================================================
 Site has 150 posts and 25 pages
+📊 Total URLs available: 500
+
+📊 LARGE SITE DETECTED (500 URLs)
+   ⏱️  Time estimates:
+      • 300 URLs: ~5 minutes
+      • Every additional 60 URLs: +1 minute
+      • Your site (500 URLs): ~8 minutes
 
 1️⃣ How many pages maximum do you want to clone?
    Current default: 50
-   Recommended for testing: 20-50
-   For larger clones: 200-500+
+   Recommended for testing: 50-100
+   For full clone: 500
    Enter max pages (or press Enter for default): 100
 
 2️⃣ What content do you want to clone?
@@ -141,10 +246,12 @@ Site has 150 posts and 25 pages
    1 = Only direct links
    2 = Two levels deep (recommended)
    3 = Three levels deep
-   Enter depth (1-3, default 2): 2
+   10 = Maximum depth (for large sites)
+   Enter depth (1-10, default 2): 2
 
 4️⃣ Delay between requests (be nice to the server)
    Current: 1 seconds
+   Minimum: 1 second (recommended for large sites)
    Enter delay in seconds (or press Enter): 1.5
 
 ✅ CONFIGURATION SUMMARY:
