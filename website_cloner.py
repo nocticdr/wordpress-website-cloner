@@ -15,6 +15,9 @@ import re
 from pathlib import Path
 import json
 import random
+import webbrowser
+import subprocess
+import platform
 
 class WordPressSiteAnalyzer:
     def __init__(self, base_url):
@@ -24,8 +27,114 @@ class WordPressSiteAnalyzer:
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
         })
 
+    def check_sitemap(self):
+        """Check sitemap.xml hierarchy and collect all URLs"""
+        sitemap_urls = [
+            f"{self.base_url}/sitemap.xml",
+            f"{self.base_url}/sitemap_index.xml", 
+            f"{self.base_url}/wp-sitemap.xml",
+            f"{self.base_url}/sitemap-index.xml"
+        ]
+        
+        all_urls = set()
+        found_sitemaps = []
+        
+        print("🗺️  Checking sitemap hierarchy...")
+        
+        # First, find top-level sitemaps
+        for sitemap_url in sitemap_urls:
+            try:
+                response = self.session.get(sitemap_url, timeout=10)
+                if response.status_code == 200:
+                    print(f"   ✅ Found top-level sitemap: {sitemap_url}")
+                    found_sitemaps.append(sitemap_url)
+                    
+                    soup = BeautifulSoup(response.content, 'xml')
+                    
+                    # Check if this is a sitemap index (contains sub-sitemaps)
+                    sitemap_refs = soup.find_all('sitemap')
+                    if sitemap_refs:
+                        print(f"   📋 This is a sitemap index with {len(sitemap_refs)} sub-sitemaps:")
+                        
+                        # Process each sub-sitemap
+                        for i, sitemap_ref in enumerate(sitemap_refs, 1):
+                            sub_sitemap_url = sitemap_ref.find('loc').text.strip()
+                            sub_sitemap_name = sub_sitemap_url.split('/')[-1] or f"sitemap-{i}"
+                            
+                            try:
+                                sub_response = self.session.get(sub_sitemap_url, timeout=10)
+                                if sub_response.status_code == 200:
+                                    sub_soup = BeautifulSoup(sub_response.content, 'xml')
+                                    sub_urls = sub_soup.find_all('loc')
+                                    
+                                    print(f"      {i:2d}. {sub_sitemap_name}: {len(sub_urls)} URLs")
+                                    
+                                    # Collect URLs from this sub-sitemap
+                                    for url in sub_urls:
+                                        url_text = url.text.strip()
+                                        if self.is_same_domain(url_text):
+                                            all_urls.add(url_text)
+                                    
+                                    time.sleep(0.2)  # Be respectful
+                                else:
+                                    print(f"      {i:2d}. {sub_sitemap_name}: ❌ Could not access")
+                            except Exception as e:
+                                print(f"      {i:2d}. {sub_sitemap_name}: ❌ Error - {e}")
+                    
+                    else:
+                        # This is a regular sitemap (not an index)
+                        urls = soup.find_all('loc')
+                        print(f"   📄 Direct sitemap with {len(urls)} URLs")
+                        
+                        for url in urls:
+                            url_text = url.text.strip()
+                            if self.is_same_domain(url_text):
+                                all_urls.add(url_text)
+                    
+                    break  # Use first found sitemap
+                    
+            except Exception as e:
+                continue
+        
+        if not found_sitemaps:
+            print("   ❌ No sitemaps found")
+            return None, {}
+        
+        # Analyze URLs to get counts
+        content_counts = self._analyze_sitemap_urls(all_urls)
+        print(f"   📊 Total internal URLs collected: {len(all_urls)}")
+        
+        return list(all_urls), content_counts
+
+    def _analyze_sitemap_urls(self, urls):
+        """Analyze sitemap URLs to categorize content (more accurate like count.py)"""
+        content_counts = {'posts': 0, 'pages': 0, 'categories': 0, 'tags': 0}
+        
+        for url in urls:
+            parsed = urlparse(url)
+            path = parsed.path.lower()
+            
+            # Skip obvious non-content URLs (like your count.py does)
+            if any(skip in path for skip in ['.jpg', '.png', '.pdf', '.zip', '.css', '.js', '.xml']):
+                continue
+            
+            # Categorize based on URL patterns
+            if '/category/' in path or '/categories/' in path:
+                content_counts['categories'] += 1
+            elif '/tag/' in path or '/tags/' in path:
+                content_counts['tags'] += 1
+            elif path == '/' or path == '':
+                content_counts['pages'] += 1  # Homepage
+            elif any(pattern in path for pattern in ['/page/', '/pages/', '/about', '/contact', '/privacy', '/terms', '/services', '/products']):
+                content_counts['pages'] += 1
+            else:
+                # Assume it's a post if it doesn't match other patterns
+                content_counts['posts'] += 1
+        
+        return content_counts
+
     def check_rest_api(self):
-        """Check WordPress REST API for content count"""
+        """Check WordPress REST API for content count (fallback if no sitemap)"""
         endpoints = [
             ('/wp-json/wp/v2/posts', 'Posts'),
             ('/wp-json/wp/v2/pages', 'Pages'),
@@ -35,7 +144,7 @@ class WordPressSiteAnalyzer:
         
         content_counts = {}
         
-        print("📡 Checking WordPress REST API...")
+        print("📡 Checking WordPress REST API (fallback)...")
         for endpoint, content_type in endpoints:
             try:
                 url = f"{self.base_url}{endpoint}?per_page=1"
@@ -92,7 +201,7 @@ class WordPressSiteAnalyzer:
         return list(set(links))  # Remove duplicates
 
     def _analyze_link_levels(self):
-        """Analyze link structure by levels from homepage"""
+        """Analyze link structure by levels from homepage with realistic estimates"""
         levels = {'level_1': 0, 'level_2': 0, 'level_3': 0, 'total': 1}
         
         try:
@@ -102,34 +211,42 @@ class WordPressSiteAnalyzer:
             level_1_links = self._get_homepage_links()
             levels['level_1'] = len(level_1_links)
             
+            if levels['level_1'] == 0:
+                print("   ⚠️  No internal links found on homepage")
+                return levels
+            
             # Sample a few level 1 pages to estimate level 2
-            level_2_estimate = 0
             sample_size = min(3, len(level_1_links))
+            sampled_links = list(level_1_links)[:sample_size]
+            all_unique_links = set(level_1_links)  # Start with level 1 links
             
-            if sample_size > 0:
-                sampled_links = list(level_1_links)[:sample_size]
-                print(f"   📊 Sampling {sample_size} level 1 pages to estimate deeper levels...")
-                for i, link in enumerate(sampled_links, 1):
-                    try:
-                        print(f"   📄 Sampling page {i}/{sample_size}...")
-                        response = self.session.get(link, timeout=10)
-                        if response.status_code == 200:
-                            soup = BeautifulSoup(response.content, 'html.parser')
-                            page_links = self._extract_internal_links(soup, link)
-                            level_2_estimate += len(page_links)
-                        time.sleep(0.5)  # Be respectful
-                    except Exception as e:
-                        print(f"   ⚠️  Could not sample {link}")
-                        continue
-                
-                # Estimate total level 2 links
-                if sample_size > 0:
-                    avg_links_per_page = level_2_estimate / sample_size
-                    levels['level_2'] = int(avg_links_per_page * levels['level_1'])
-                    # Rough estimate for level 3 (assuming similar pattern but less)
-                    levels['level_3'] = int(levels['level_2'] * 0.3)  # Conservative estimate
+            print(f"   📊 Sampling {sample_size} level 1 pages to estimate deeper levels...")
             
+            for i, link in enumerate(sampled_links, 1):
+                try:
+                    print(f"   📄 Sampling page {i}/{sample_size}...")
+                    response = self.session.get(link, timeout=10)
+                    if response.status_code == 200:
+                        soup = BeautifulSoup(response.content, 'html.parser')
+                        page_links = self._extract_internal_links(soup, link)
+                        all_unique_links.update(page_links)
+                    time.sleep(0.5)  # Be respectful
+                except Exception as e:
+                    print(f"   ⚠️  Could not sample {link}")
+                    continue
+            
+            # Calculate realistic estimates
+            total_unique_links = len(all_unique_links)
+            level_2_estimate = max(0, total_unique_links - levels['level_1'])
+            
+            # More conservative estimates
+            levels['level_2'] = min(level_2_estimate, levels['level_1'] * 2)  # Cap at 2x level 1
+            levels['level_3'] = min(int(levels['level_2'] * 0.2), 50)  # Max 50, 20% of level 2
+            
+            # Total should be more realistic
             levels['total'] = 1 + levels['level_1'] + levels['level_2'] + levels['level_3']
+            
+            print(f"   📊 Found {total_unique_links} unique links across sampled pages")
             
         except Exception as e:
             print(f"⚠️  Could not analyze link structure: {e}")
@@ -137,46 +254,64 @@ class WordPressSiteAnalyzer:
         return levels
 
     def analyze_quick(self):
-        """Quick analysis for the interactive cloner with level breakdown"""
+        """Quick analysis using sitemap (most accurate)"""
         print(f"🔍 Analyzing {self.base_url}...")
-        content_counts = self.check_rest_api()
         
-        posts = content_counts.get('posts', 0)
-        pages = content_counts.get('pages', 0)
+        # Try sitemap first (most accurate)
+        sitemap_urls, content_counts = self.check_sitemap()
         
-        print(f"📋 QUICK ANALYSIS:")
-        print(f"   📝 Posts: {posts}")
-        print(f"   📄 Pages: {pages}")
-        print(f"   📂 Categories: {content_counts.get('categories', 0)}")
-        print(f"   🏷️  Tags: {content_counts.get('tags', 0)}")
-        
-        # Analyze link levels for homepage crawling
-        try:
-            level_analysis = self._analyze_link_levels()
-            if level_analysis.get('level_1', 0) > 0:
-                print(f"\n🔗 LINK STRUCTURE ANALYSIS:")
-                print(f"   🏠 Homepage: 1 page")
-                print(f"   📊 Level 1 links: {level_analysis.get('level_1', 0)} pages")
-                print(f"   📊 Level 2 links: {level_analysis.get('level_2', 0)} pages (estimated)")
-                print(f"   📊 Level 3 links: {level_analysis.get('level_3', 0)} pages (estimated)")
-                print(f"   📊 Total discoverable: {level_analysis.get('total', 0)} pages")
-            content_counts['level_analysis'] = level_analysis
-        except Exception as e:
-            print(f"⚠️  Link analysis failed: {e}")
-            content_counts['level_analysis'] = {'level_1': 0, 'level_2': 0, 'level_3': 0, 'total': 1}
-        
-        total_pages = posts + pages
-        
-        if total_pages <= 50:
-            recommendation = "🟢 SMALL SITE - Safe to clone fully"
-        elif total_pages <= 200:
-            recommendation = "🟡 MEDIUM SITE - Consider batching"
-        elif total_pages <= 500:
-            recommendation = "🟠 LARGE SITE - Definitely use batches"
+        if sitemap_urls:
+            # Use sitemap data (most accurate)
+            total_urls = len(sitemap_urls)
+            posts = content_counts.get('posts', 0)
+            pages = content_counts.get('pages', 0)
+            categories = content_counts.get('categories', 0)
+            tags = content_counts.get('tags', 0)
+            
+            print(f"📋 SITE ANALYSIS (from sitemap):")
+            print(f"   📝 Posts: {posts}")
+            print(f"   📄 Pages: {pages}")
+            print(f"   📂 Categories: {categories}")
+            print(f"   🏷️  Tags: {tags}")
+            print(f"   📊 Total URLs: {total_urls}")
+            
+            # Store sitemap URLs for later use
+            content_counts['sitemap_urls'] = sitemap_urls
+            
+            # Recommendation based on actual sitemap count
+            if total_urls <= 50:
+                recommendation = "🟢 SMALL SITE - Safe to clone fully"
+            elif total_urls <= 200:
+                recommendation = "🟡 MEDIUM SITE - Consider batching"
+            elif total_urls <= 500:
+                recommendation = "🟠 LARGE SITE - Definitely use batches"
+            else:
+                recommendation = "🔴 VERY LARGE SITE - Clone selectively"
+            
+            print(f"   {recommendation}")
+            print(f"   ℹ️  Recommendation based on sitemap count ({total_urls} URLs)")
+            
         else:
-            recommendation = "🔴 VERY LARGE SITE - Clone selectively"
-        
-        print(f"   {recommendation}")
+            # Fallback to REST API if no sitemap found
+            print("📋 SITE ANALYSIS (using WordPress REST API - fallback):")
+            content_counts = self.check_rest_api()
+            sitemap_urls = None
+            
+            posts = content_counts.get('posts', 0)
+            pages = content_counts.get('pages', 0)
+            total_pages = posts + pages
+            
+            if total_pages <= 50:
+                recommendation = "🟢 SMALL SITE - Safe to clone fully"
+            elif total_pages <= 200:
+                recommendation = "🟡 MEDIUM SITE - Consider batching"
+            elif total_pages <= 500:
+                recommendation = "🟠 LARGE SITE - Definitely use batches"
+            else:
+                recommendation = "🔴 VERY LARGE SITE - Clone selectively"
+            
+            print(f"   {recommendation}")
+            print(f"   ℹ️  Recommendation based on API count ({total_pages} pages)")
         
         return content_counts
 
@@ -199,6 +334,7 @@ class InteractiveWordPressCloner:
         self.random_count = 50
         self.delay_between_requests = 1
         self.custom_urls = []
+        self.auto_open_browser = True
         
         # Create output directory
         Path(self.output_dir).mkdir(exist_ok=True)
@@ -206,6 +342,27 @@ class InteractiveWordPressCloner:
 
         # Check for existing files
         self.existing_files = self._get_existing_files()
+
+    def _open_index_file(self):
+        """Open the index.html file in the default web browser"""
+        index_path = os.path.join(self.output_dir, "index.html")
+        
+        if os.path.exists(index_path):
+            try:
+                # Convert to absolute path for better compatibility
+                abs_path = os.path.abspath(index_path)
+                
+                # Use webbrowser module (cross-platform)
+                webbrowser.open(f"file://{abs_path}")
+                print(f"🌐 Opened {index_path} in your default browser")
+                return True
+            except Exception as e:
+                print(f"⚠️  Could not open browser automatically: {e}")
+                print(f"   Please manually open: {index_path}")
+                return False
+        else:
+            print(f"⚠️  Index file not found: {index_path}")
+            return False
 
     def _get_existing_files(self):
         """Check for existing HTML files in the output directory"""
@@ -351,6 +508,22 @@ class InteractiveWordPressCloner:
             except ValueError:
                 print("   Please enter a valid number")
         
+        # Auto-open browser option
+        open_question = "5️⃣" if self.clone_mode != 'custom' else "4️⃣"
+        print(f"\n{open_question} Open cloned site in browser when done?")
+        print("   This will automatically open the index.html file")
+        
+        while True:
+            user_input = input("   Open in browser? (y/n, default y): ").strip().lower()
+            if user_input in ['', 'y', 'yes']:
+                self.auto_open_browser = True
+                break
+            elif user_input in ['n', 'no']:
+                self.auto_open_browser = False
+                break
+            else:
+                print("   Please enter y or n")
+        
         # Summary
         print(f"\n✅ CONFIGURATION SUMMARY:")
         print(f"   📊 Max pages: {self.max_pages}")
@@ -362,6 +535,7 @@ class InteractiveWordPressCloner:
         if self.clone_mode != 'custom':
             print(f"   🔍 Crawl depth: {self.max_depth}")
         print(f"   ⏱️  Request delay: {self.delay_between_requests}s")
+        print(f"   🌐 Auto-open browser: {'Yes' if self.auto_open_browser else 'No'}")
         
         confirm = input("\n   Proceed with these settings? (y/n): ").strip().lower()
         return confirm in ['y', 'yes', '']
@@ -566,50 +740,92 @@ class InteractiveWordPressCloner:
         return list(set(links))  # Remove duplicates
     
     def _get_urls_api_based(self):
-        """Original API-based URL collection for options 1 and 4, filtering out existing files"""
+        """URL collection using sitemap (preferred) or API fallback, filtering out existing files"""
         urls = set()
         skipped_count = 0
         
-        # ALWAYS start with homepage
-        if self._is_file_already_downloaded(self.base_url):
-            print(f"⏭️  SKIPPED homepage (already exists)")
-            skipped_count += 1
+        # Check if we have sitemap URLs from analysis
+        sitemap_urls = getattr(self, 'sitemap_urls', None)
+        
+        if sitemap_urls:
+            print(f"🗺️  Using sitemap URLs (much faster than API)")
+            
+            # ALWAYS start with homepage
+            if self._is_file_already_downloaded(self.base_url):
+                print(f"⏭️  SKIPPED homepage (already exists)")
+                skipped_count += 1
+            else:
+                urls.add(self.base_url)
+                print(f"✅ Added homepage: {self.base_url}")
+            
+            if self.clone_mode == 'recent':
+                # Option 1: Recent posts only (quick test) - use first 20 from sitemap
+                recent_posts = [url for url in sitemap_urls if url != self.base_url][:20]
+                for post in recent_posts:
+                    if self._is_file_already_downloaded(post):
+                        skipped_count += 1
+                    else:
+                        urls.add(post)
+                print(f"✅ Added {len(urls) - (1 if self.base_url in urls else 0)} recent posts from sitemap")
+                if skipped_count > 0:
+                    print(f"⏭️  Skipped {skipped_count} posts (already exist)")
+            
+            elif self.clone_mode == 'all':
+                # Option 4: All posts and pages (full clone) - use all sitemap URLs
+                for url in sitemap_urls:
+                    if self._is_file_already_downloaded(url):
+                        skipped_count += 1
+                    else:
+                        urls.add(url)
+                
+                print(f"✅ Added {len(urls) - (1 if self.base_url in urls else 0)} URLs from sitemap")
+                if skipped_count > 0:
+                    print(f"⏭️  Skipped {skipped_count} URLs (already exist)")
+        
         else:
-            urls.add(self.base_url)
-            print(f"✅ Added homepage: {self.base_url}")
-        
-        if self.clone_mode == 'recent':
-            # Option 1: Recent posts only (quick test)
-            recent_posts = self._get_recent_posts(20)
-            for post in recent_posts:
-                if self._is_file_already_downloaded(post):
-                    skipped_count += 1
-                else:
-                    urls.add(post)
-            print(f"✅ Added {len(urls) - (1 if self.base_url in urls else 0)} recent posts")
-            if skipped_count > 0:
-                print(f"⏭️  Skipped {skipped_count} posts (already exist)")
-        
-        elif self.clone_mode == 'all':
-            # Option 4: All posts and pages (full clone)
-            all_posts = self._get_all_posts()
-            all_pages = self._get_all_pages()
+            # Fallback to API-based collection
+            print(f"📡 Using REST API (sitemap not available)")
             
-            for post in all_posts:
-                if not self._is_file_already_downloaded(post):
-                    urls.add(post)
-                else:
-                    skipped_count += 1
+            # ALWAYS start with homepage
+            if self._is_file_already_downloaded(self.base_url):
+                print(f"⏭️  SKIPPED homepage (already exists)")
+                skipped_count += 1
+            else:
+                urls.add(self.base_url)
+                print(f"✅ Added homepage: {self.base_url}")
             
-            for page in all_pages:
-                if not self._is_file_already_downloaded(page):
-                    urls.add(page)
-                else:
-                    skipped_count += 1
+            if self.clone_mode == 'recent':
+                # Option 1: Recent posts only (quick test)
+                recent_posts = self._get_recent_posts(20)
+                for post in recent_posts:
+                    if self._is_file_already_downloaded(post):
+                        skipped_count += 1
+                    else:
+                        urls.add(post)
+                print(f"✅ Added {len(urls) - (1 if self.base_url in urls else 0)} recent posts")
+                if skipped_count > 0:
+                    print(f"⏭️  Skipped {skipped_count} posts (already exist)")
             
-            print(f"✅ Added {len(urls) - (1 if self.base_url in urls else 0)} posts + pages")
-            if skipped_count > 0:
-                print(f"⏭️  Skipped {skipped_count} posts/pages (already exist)")
+            elif self.clone_mode == 'all':
+                # Option 4: All posts and pages (full clone)
+                all_posts = self._get_all_posts()
+                all_pages = self._get_all_pages()
+                
+                for post in all_posts:
+                    if not self._is_file_already_downloaded(post):
+                        urls.add(post)
+                    else:
+                        skipped_count += 1
+                
+                for page in all_pages:
+                    if not self._is_file_already_downloaded(page):
+                        urls.add(page)
+                    else:
+                        skipped_count += 1
+                
+                print(f"✅ Added {len(urls) - (1 if self.base_url in urls else 0)} posts + pages")
+                if skipped_count > 0:
+                    print(f"⏭️  Skipped {skipped_count} posts/pages (already exist)")
         
         return list(urls)
     
@@ -937,7 +1153,6 @@ class InteractiveWordPressCloner:
         print(f"\n🎉 CLONING COMPLETED!")
         print(f"📊 Pages processed: {processed}")
         print(f"📁 Output directory: {self.output_dir}")
-        print(f"🌐 Open {self.output_dir}/index.html to view")
         
         # Show existing files info
         if len(self.existing_files) > 0:
@@ -951,6 +1166,13 @@ class InteractiveWordPressCloner:
             print(f"\n📋 CUSTOM URLS CLONED:")
             print(f"   📄 Total custom pages: {processed}")
             print(f"   🏠 Homepage included: {'Yes' if self.base_url in self.visited_urls else 'No'}")
+        
+        # Automatically open the index.html file if requested
+        if self.auto_open_browser:
+            print(f"\n🌐 Opening cloned site...")
+            self._open_index_file()
+        else:
+            print(f"\n🌐 To view the cloned site, open: {self.output_dir}/index.html")
 
 
 def main():
@@ -982,6 +1204,10 @@ def main():
     
     # Create cloner instance
     cloner = InteractiveWordPressCloner(site_url, output_dir)
+    
+    # Pass sitemap URLs to cloner if available
+    if content_counts.get('sitemap_urls'):
+        cloner.sitemap_urls = content_counts['sitemap_urls']
     
     # Get user preferences
     if cloner.get_user_preferences(content_counts):

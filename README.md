@@ -97,25 +97,23 @@ The script will:
 🎯 Target: https://example.com
 
 🔍 Analyzing https://example.com...
-📡 Checking WordPress REST API...
-   📊 Posts: 150
-   📄 Pages: 25
-   📂 Categories: 12
-   🏷️  Tags: 45
+🗺️  Checking sitemap hierarchy...
+   ✅ Found top-level sitemap: https://example.com/sitemap_index.xml
+   📋 This is a sitemap index with 4 sub-sitemaps:
+      1. sitemap-posts.xml: 150 URLs
+      2. sitemap-pages.xml: 25 URLs
+      3. sitemap-categories.xml: 12 URLs
+      4. sitemap-tags.xml: 45 URLs
+   📊 Total internal URLs collected: 232
 
-🔗 LINK STRUCTURE ANALYSIS:
-   🏠 Homepage: 1 page
-   📊 Level 1 links: 18 pages
-   📊 Level 2 links: 45 pages (estimated)
-   📊 Level 3 links: 13 pages (estimated)
-   📊 Total discoverable: 77 pages
-
-📋 QUICK ANALYSIS:
+📋 SITE ANALYSIS (from sitemap):
    📝 Posts: 150
    📄 Pages: 25
    📂 Categories: 12
    🏷️  Tags: 45
+   📊 Total URLs: 232
    🟡 MEDIUM SITE - Consider batching
+   ℹ️  Recommendation based on sitemap count (232 URLs)
 ```
 
 ### Configuration Menu
@@ -190,6 +188,11 @@ Site has 150 posts and 25 pages
 
 📁 Found 12 existing HTML files in cloned_example_com
    These will be skipped to avoid re-downloading
+
+🗺️  Using sitemap URLs (much faster than API)
+✅ Added homepage: https://example.com
+✅ Added 163 URLs from sitemap
+⏭️  Skipped 12 URLs (already exist)
 
 📋 Using custom URLs:
     1. ✅ https://example.com
