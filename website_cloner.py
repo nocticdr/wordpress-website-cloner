@@ -80,8 +80,10 @@ class WordPressSiteAnalyzer:
                                                 parsed = urlparse(url_text)
                                                 path = parsed.path.lower()
                                                 if not any(skip in path for skip in ['.jpg', '.png', '.pdf', '.zip', '.css', '.js', '.xml']):
-                                                    actual_urls.append(url_text)
-                                                    all_urls.add(url_text)
+                                                    # Additional filtering for valid content URLs
+                                                    if self._is_valid_content_url(url_text):
+                                                        actual_urls.append(url_text)
+                                                        all_urls.add(url_text)
                                     
                                     print(f"      {i:2d}. {sub_sitemap_name}: {len(actual_urls)} URLs")
                                     sub_sitemap_details[sub_sitemap_name] = actual_urls
@@ -97,7 +99,7 @@ class WordPressSiteAnalyzer:
                         
                         for url in urls:
                             url_text = url.text.strip()
-                            if self.is_same_domain(url_text):
+                            if self.is_same_domain(url_text) and self._is_valid_content_url(url_text):
                                 all_urls.add(url_text)
                     
                     break  # Use first found sitemap
@@ -304,6 +306,9 @@ class WordPressSiteAnalyzer:
 
     def analyze_quick(self):
         """Quick analysis using sitemap (most accurate)"""
+        print("\n" + "="*60)
+        print("🛠️  PAGE COUNT ANALYZER")
+        print("="*60)
         print(f"🔍 Analyzing {self.base_url}...")
         
         # Try sitemap first (most accurate)
@@ -421,9 +426,7 @@ class InteractiveWordPressCloner:
                 for file in os.listdir(self.output_dir):
                     if file.endswith('.html'):
                         existing_files.add(file)
-                if existing_files:
-                    print(f"📁 Found {len(existing_files)} existing HTML files in {self.output_dir}")
-                    print(f"   These will be skipped to avoid re-downloading")
+                # Note: Existing files info is shown in cloning configuration
         except Exception as e:
             print(f"⚠️  Could not check existing files: {e}")
         return existing_files
@@ -436,6 +439,39 @@ class InteractiveWordPressCloner:
         else:
             filename = parsed_url.path.strip('/').replace('/', '_') + ".html"
             return self.clean_filename(filename)
+
+    def _is_valid_content_url(self, url):
+        """Check if URL is valid content (not a query/template URL)"""
+        parsed = urlparse(url)
+        
+        # Skip URLs with query parameters (templates, components, etc.)
+        if parsed.query:
+            return False
+        
+        # Skip URLs with fragments
+        if parsed.fragment:
+            return False
+            
+        # Skip common non-content patterns
+        path = parsed.path.lower()
+        skip_patterns = [
+            '/wp-admin/',
+            '/wp-content/',
+            '/wp-includes/',
+            '/wp-json/',
+            '/xmlrpc.php',
+            '/feed/',
+            '/rss/',
+            '/sitemap',
+            '/robots.txt',
+            '/favicon.ico'
+        ]
+        
+        for pattern in skip_patterns:
+            if pattern in path:
+                return False
+                
+        return True
 
     def _check_missing_urls_from_sitemap(self):
         """Check which URLs from all_sitemap_urls.txt are missing as HTML files"""
@@ -454,7 +490,14 @@ class InteractiveWordPressCloner:
             
             print(f"🔍 Checking {len(sitemap_urls)} URLs from {sitemap_file}...")
             
-            for url in sitemap_urls:
+            # Filter out invalid URLs
+            valid_urls = [url for url in sitemap_urls if self._is_valid_content_url(url)]
+            filtered_count = len(sitemap_urls) - len(valid_urls)
+            
+            if filtered_count > 0:
+                print(f"   🚫 Filtered out {filtered_count} non-content URLs (queries, templates, etc.)")
+            
+            for url in valid_urls:
                 expected_filename = self._get_filename_from_url(url)
                 if expected_filename not in existing_files:
                     missing_urls.append(url)
@@ -466,7 +509,7 @@ class InteractiveWordPressCloner:
                 if len(missing_urls) > 10:
                     print(f"   ... and {len(missing_urls) - 10} more")
             else:
-                print(f"✅ All URLs from sitemap already exist as HTML files")
+                print(f"✅ All valid URLs from sitemap already exist as HTML files")
                 
         except Exception as e:
             print(f"⚠️  Could not read {sitemap_file}: {e}")
@@ -510,7 +553,8 @@ class InteractiveWordPressCloner:
             self.missing_urls_count = len(missing_urls)
         else:
             print(f"\n✅ ALL URLS ALREADY EXIST:")
-            print(f"   📊 All URLs from sitemap already have HTML files")
+            print(f"   📊 All URLs from sitemap already have HTML files - no processing needed")
+            print(f"   📁 Output directory: {self.output_dir}")
             print(f"   🚀 Will skip to completion summary")
             self.missing_urls_count = 0
         
@@ -522,15 +566,17 @@ class InteractiveWordPressCloner:
             self.delay_between_requests = 1.0
             self.auto_open_browser = True
             
-            print(f"\n✅ SMALL SITE DETECTED ({total_urls} URLs)")
-            print(f"   📊 Total URLs is less than cut-off of 300")
-            print(f"   🚀 Will proceed with full clone")
-            print(f"   ⏱️  Estimated time: ~5 minutes")
-            print(f"   ⚙️  Auto-configured settings:")
-            print(f"      • Max pages: {self.max_pages}")
-            print(f"      • Crawl depth: {self.max_depth}")
-            print(f"      • Request delay: {self.delay_between_requests}s")
-            print(f"      • Auto-open browser: Yes")
+            # Only show auto-configuration if there are URLs to process
+            if not (hasattr(self, 'missing_urls_count') and self.missing_urls_count == 0):
+                print(f"\n✅ SMALL SITE DETECTED ({total_urls} URLs)")
+                print(f"   📊 Total URLs is less than cut-off of 300")
+                print(f"   🚀 Will proceed with full clone")
+                print(f"   ⏱️  Estimated time: ~5 minutes")
+                print(f"   ⚙️  Auto-configured settings:")
+                print(f"      • Max pages: {self.max_pages}")
+                print(f"      • Crawl depth: {self.max_depth}")
+                print(f"      • Request delay: {self.delay_between_requests}s")
+                print(f"      • Auto-open browser: Yes")
             
             # Skip all other configuration questions
             return True
@@ -1247,15 +1293,48 @@ class InteractiveWordPressCloner:
             print(f"   ❌ Error: {e}")
             return set()
 
+    def _open_cloned_site(self):
+        """Open the cloned site in the default browser"""
+        try:
+            import webbrowser
+            index_path = os.path.join(self.output_dir, "index.html")
+            if os.path.exists(index_path):
+                webbrowser.open(f"file://{os.path.abspath(index_path)}")
+                print(f"🌐 Opened {self.output_dir}/index.html in your default browser")
+            else:
+                print(f"⚠️  Index file not found: {index_path}")
+        except Exception as e:
+            print(f"⚠️  Could not open browser: {e}")
+
+    def _show_completion_summary(self, processed, new_downloads, is_skipped=False):
+        """Show completion summary and open browser if enabled"""
+        if is_skipped:
+            # For skipped case, just show the batch summary and open browser
+            pass
+        else:
+            print(f"\n🎉 CLONING COMPLETED!")
+            print(f"📊 Pages processed: {processed}")
+            print(f"📁 Output directory: {self.output_dir}")
+        
+        # Show existing files info
+        if len(self.existing_files) > 0:
+            print(f"\n📋 BATCH SUMMARY:")
+            print(f"   📄 New pages downloaded: {new_downloads}")
+            print(f"   ⏭️  Pages already existed: {len(self.existing_files)}")
+            print(f"   📊 Total pages in directory: {new_downloads + len(self.existing_files)}")
+        
+        # Auto-open browser if enabled
+        if self.auto_open_browser:
+            self._open_cloned_site()
+
     def clone_site(self):
         """Main method to clone the WordPress site"""
-        print(f"\n🚀 Starting clone of {self.base_url}")
-        
         # Check if all URLs already exist (smart skip)
         if hasattr(self, 'missing_urls_count') and self.missing_urls_count == 0:
-            print("\n📋 Found 0 URLs to process")
-            self._show_completion_summary(0, 0)
+            self._show_completion_summary(0, 0, is_skipped=True)
             return
+        
+        print(f"\n🚀 Starting clone of {self.base_url}")
         
         # Get URLs to process
         urls_to_process = self.get_urls_by_mode()
@@ -1338,34 +1417,28 @@ def main():
     print("="*60)
     print("What would you like to do?")
     print("   1. Count URLs only (quick analysis)")
-    print("   2. Clone site only (skip counting)")
-    print("   3. Both count and clone (recommended)")
-    print("   4. Exit")
+    print("   2. Both count and clone (recommended)")
+    print("   3. Exit")
     
     while True:
-        choice = input("\n   Enter choice (1/2/3/4, default 1): ").strip()
+        choice = input("\n   Enter choice (1/2/3, default 1): ").strip()
         if choice == "" or choice == "1":
             action = "count"
             print("   ✅ Selected: Count URLs only")
             break
         elif choice == "2":
-            action = "clone"
-            print("   ✅ Selected: Clone site only")
-            break
-        elif choice == "3":
             action = "both"
             print("   ✅ Selected: Both count and clone")
             break
-        elif choice == "4":
+        elif choice == "3":
             print("   👋 Goodbye!")
             sys.exit(0)
         else:
-            print("   Please enter 1, 2, 3, or 4")
+            print("   Please enter 1, 2, or 3")
     
     # Perform site analysis (always needed for cloning)
     content_counts = {}
     if action in ["count", "both"]:
-        print(f"\n🔍 Analyzing {site_url}...")
         try:
             analyzer = WordPressSiteAnalyzer(site_url)
             content_counts = analyzer.analyze_quick()
@@ -1375,15 +1448,7 @@ def main():
                 print("❌ Cannot proceed with count-only mode")
                 sys.exit(1)
             content_counts = {}
-    elif action == "clone":
-        print(f"\n🔍 Quick analysis for cloning...")
-        try:
-            analyzer = WordPressSiteAnalyzer(site_url)
-            content_counts = analyzer.analyze_quick()
-        except Exception as e:
-            print(f"❌ Analysis failed: {e}")
-            print("❌ Cannot proceed without site analysis")
-            sys.exit(1)
+
     
     # If count-only mode, exit here
     if action == "count":

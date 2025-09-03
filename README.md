@@ -102,11 +102,10 @@ The script will:
 ============================================================
 What would you like to do?
    1. Count URLs only (quick analysis)
-   2. Clone site only (skip counting)
-   3. Both count and clone (recommended)
-   4. Exit
+   2. Both count and clone (recommended)
+   3. Exit
 
-   Enter choice (1/2/3/4, default 1): 1
+   Enter choice (1/2/3, default 1): 1
    ✅ Selected: Count URLs only
 ```
 
@@ -183,32 +182,14 @@ Site has 35 posts and 4 pages
 ✅ All URLs from sitemap already exist as HTML files
 
 ✅ ALL URLS ALREADY EXIST:
-   📊 All URLs from sitemap already have HTML files
+   📊 All URLs from sitemap already have HTML files - no processing needed
+   📁 Output directory: cloned_fingreen_org
    🚀 Will skip to completion summary
-
-✅ SMALL SITE DETECTED (42 URLs)
-   📊 Total URLs is less than cut-off of 300
-   🚀 Will proceed with full clone
-   ⏱️  Estimated time: ~5 minutes
-   ⚙️  Auto-configured settings:
-      • Max pages: 300
-      • Crawl depth: 10
-      • Request delay: 1.0s
-      • Auto-open browser: Yes
-
-🚀 Starting clone of https://fingreen.org
-📋 Found 0 URLs to process
-
-🔄 PROCESSING PAGES:
-
-🎉 CLONING COMPLETED!
-📊 Pages processed: 0
-📁 Output directory: cloned_fingreen_org
 
 📋 BATCH SUMMARY:
    📄 New pages downloaded: 0
-   ⏭️  Pages already existed: 51
-   📊 Total pages in directory: 51
+   ⏭️  Pages already existed: 42
+   📊 Total pages in directory: 42
 
 🌐 Opening cloned site...
 🌐 Opened cloned_fingreen_org/index.html in your default browser
